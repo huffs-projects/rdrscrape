@@ -2,6 +2,12 @@
 
 CLI scraper for Royal Road and Scribble Hub fiction. Output formats: EPUB, JSON, single-file HTML, Markdown, or plain text.
 
+## Installation
+
+```bash
+cargo install --path
+```
+(just make sure `~/.cargo/bin` is in your PATH)
 ## Build
 
 ```bash
@@ -13,6 +19,7 @@ Release build:
 ```bash
 cargo build --release
 ```
+
 
 ## Usage
 
