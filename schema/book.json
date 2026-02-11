@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "rdrscrape Book",
+  "description": "Canonical book shape emitted by rdrscrape (Royal Road / Scribble Hub).",
+  "type": "object",
+  "required": ["title", "author", "chapters"],
+  "properties": {
+    "title": { "type": "string" },
+    "author": { "type": "string" },
+    "description": { "type": "string" },
+    "coverUrl": { "type": "string" },
+    "chapters": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/Chapter" }
+    },
+    "sourceUrl": { "type": "string" }
+  },
+  "definitions": {
+    "Chapter": {
+      "type": "object",
+      "required": ["title", "index", "body"],
+      "properties": {
+        "title": { "type": "string" },
+        "index": { "type": "integer", "minimum": 1 },
+        "body": { "type": "string" }
+      }
+    }
+  }
+}

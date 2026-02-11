@@ -1,0 +1,102 @@
+.\" rdrscrape.1 - man page for rdrscrape
+.TH RDRSCRAPE 1 "" "rdrscrape"
+.SH NAME
+rdrscrape \- Scrape Royal Road or Scribble Hub fiction and write EPUB, JSON, HTML, Markdown, or text
+.SH SYNOPSIS
+.B rdrscrape
+[\fIOPTIONS\fR] \fIURL\fR
+.SH DESCRIPTION
+Scrapes a story or series from Royal Road or Scribble Hub and writes output in the chosen format (default EPUB). Supports resume from partial JSON, chapter range, and config file overrides. CLI flags override config.
+.SH OPTIONS
+.TP
+\fIURL\fR
+Story or series URL (Royal Road fiction page or Scribble Hub series page). Required.
+.TP
+.BR \-o ", " \-\-output " \fIPATH\fR"
+Output path. Default: \fI{output_dir}/{sanitized-title}.{ext}\fR (ext depends on \fB\-\-format\fR).
+.TP
+.B \-\-format \fIFORMAT\fR
+Output format: epub, json, html, markdown, or text. Default: epub.
+.TP
+.B \-\-site \fISITE\fR
+Override site detection: royalroad or scribblehub.
+.TP
+.B \-\-epub\-2
+Generate EPUB 2 instead of EPUB 3 (only when format is epub).
+.TP
+.BR \-q ", " \-\-quiet
+Suppress progress output (errors only).
+.TP
+.B \-\-verbose
+Print verbose error chain.
+.TP
+.B \-\-ncx
+Include toc.ncx in EPUB 3 output for legacy readers. No effect for EPUB 2.
+.TP
+.B \-\-chapters \fIFROM\fR-\fITO\fR
+Scrape only chapters in this range (1-based inclusive), e.g. 1\-10 or 5\-20.
+.TP
+.B \-\-resume \fIPATH\fR
+Resume from a partial scrape saved at this path (JSON). Load existing chapters and fetch only missing ones; save progress after each chapter.
+.TP
+.B \-\-locked\-chapters \fIMODE\fR
+How to handle Royal Road locked (premium) chapters: skip (default), placeholder, or fail.
+.TP
+.B \-\-empty\-chapters \fIMODE\fR
+How to handle chapters with empty body or missing content: skip (default), placeholder, or fail.
+.TP
+.B \-\-user\-agent \fISTRING\fR
+HTTP User-Agent (overrides config).
+.TP
+.B \-\-delay \fISECS\fR
+Delay between requests in seconds (overrides config; default 2).
+.TP
+.B \-\-timeout \fISECS\fR
+Request timeout in seconds (overrides config; default 30).
+.TP
+.B \-\-dry\-run
+Resolve site, fetch TOC only, print chapter count and output path without writing.
+.TP
+.B \-\-validate
+After writing an EPUB, run epubcheck to validate it (epubcheck must be on PATH). No effect for non-EPUB output.
+.TP
+.BR \-h ", " \-\-help
+Print help.
+.SH CONFIGURATION
+Optional TOML config. Search order: (1) \fI./rdrscrape.toml\fR, (2) \fI$XDG_CONFIG_HOME/rdrscrape/config.toml\fR (or \fI~/.config/rdrscrape/config.toml\fR). Missing file is not an error. CLI flags override config.
+.PP
+Config keys:
+.TP
+.B output_dir
+Default output directory when \fB\-o\fR is omitted. Default: \fI.\fR
+.TP
+.B user_agent
+HTTP User-Agent.
+.TP
+.B request_delay_secs
+Delay between requests in seconds. Default: 2
+.TP
+.B timeout_secs
+Request timeout in seconds. Default: 30
+.TP
+.B toc_page
+Include a visible table-of-contents page after the cover in EPUB. Default: true. Set to false to disable.
+.TP
+.B retry_count
+Number of HTTP attempts for transient failures. Default: 3
+.TP
+.B retry_backoff_secs
+Delay in seconds before each retry, as array (e.g. [1, 2, 4]). Length should be retry_count \- 1. Default: [1, 2, 4]
+.TP
+.B empty_chapters
+When a chapter has empty body or missing content container: skip (default), placeholder, or fail.
+.SH EXIT CODES
+0 \- success
+.br
+1 \- invalid input (URL, site, output path)
+.br
+2 \- scraper failure (network, parse, site)
+.br
+3 \- EPUB or format write failure
+.SH SEE ALSO
+README in the project source. \fBepubcheck\fR(1) when using \fB\-\-validate\fR.
