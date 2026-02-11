@@ -4,7 +4,7 @@ CLI scraper for Royal Road and Scribble Hub fiction. Output formats: EPUB, JSON,
 
 ## Installation
 
-### Homebrew
+### Homebrew (MacOS)
 ```bash
 brew tap huffs-projects/rdrscrape
 brew install rdrscrape
