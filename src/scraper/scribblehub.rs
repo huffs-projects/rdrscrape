@@ -358,11 +358,10 @@ impl Scraper for ScribbleHubScraper<'_> {
         let html = check_response(response, &series_url, Some("story page"))?;
 
         let mut toc = fetch_full_toc(self.client, &series_url, &html)?;
+        let total = toc.len() as u32;
         if let Some((from, to)) = options.chapter_range {
             toc.retain(|(index, _, _)| *index >= from && *index <= to);
         }
-
-        let total = toc.len() as u32;
 
         let mut book: Book = if let Some(init) = options.initial_book {
             init.clone()
@@ -393,12 +392,14 @@ impl Scraper for ScribbleHubScraper<'_> {
             return Ok(book);
         }
 
+        let mut done = 0u32;
         for (index, chapter_url, _) in toc {
             if book.chapters.iter().any(|c| c.index == index) {
                 continue;
             }
+            done += 1;
             if let Some(ref p) = options.progress {
-                p(index, total);
+                p(done, total);
             }
             let response = match self.client.get_with_retry(&chapter_url) {
                 Ok(r) => r,

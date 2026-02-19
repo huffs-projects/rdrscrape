@@ -372,11 +372,10 @@ impl Scraper for RoyalRoadScraper<'_> {
             });
         }
 
+        let total = toc.len() as u32;
         if let Some((from, to)) = options.chapter_range {
             toc.retain(|(index, _, _, _)| *index >= from && *index <= to);
         }
-
-        let total = toc.len() as u32;
 
         let mut book: Book = if let Some(init) = options.initial_book {
             init.clone()
@@ -424,12 +423,14 @@ impl Scraper for RoyalRoadScraper<'_> {
             return Ok(book);
         }
 
+        let mut done = 0u32;
         for (index, chapter_url, title, is_unlocked) in toc {
             if book.chapters.iter().any(|c| c.index == index) {
                 continue;
             }
+            done += 1;
             if let Some(ref p) = options.progress {
-                p(index, total);
+                p(done, total);
             }
 
             if !is_unlocked {
