@@ -428,11 +428,9 @@ impl Scraper for RoyalRoadScraper<'_> {
             if book.chapters.iter().any(|c| c.index == index) {
                 continue;
             }
-            done += 1;
-            if let Some(ref p) = options.progress {
-                p(done, total);
+            if options.cancel_check.map(|c| c()).unwrap_or(false) {
+                return Err(ScraperError::Cancelled);
             }
-
             if !is_unlocked {
                 match options
                     .locked_behavior
@@ -450,6 +448,10 @@ impl Scraper for RoyalRoadScraper<'_> {
                             body: placeholder_body,
                         });
                         book.chapters.sort_by_key(|c| c.index);
+                        done += 1;
+                        if let Some(ref p) = options.progress {
+                            p(done, total);
+                        }
                         if let Some(ref cb) = options.on_checkpoint {
                             cb(&book);
                         }
@@ -513,6 +515,10 @@ impl Scraper for RoyalRoadScraper<'_> {
                                     body: "<p>This chapter returned no content.</p>".to_string(),
                                 });
                                 book.chapters.sort_by_key(|c| c.index);
+                                done += 1;
+                                if let Some(ref p) = options.progress {
+                                    p(done, total);
+                                }
                                 if let Some(ref cb) = options.on_checkpoint {
                                     cb(&book);
                                 }
@@ -532,6 +538,10 @@ impl Scraper for RoyalRoadScraper<'_> {
                         body,
                     });
                     book.chapters.sort_by_key(|c| c.index);
+                    done += 1;
+                    if let Some(ref p) = options.progress {
+                        p(done, total);
+                    }
                     if let Some(ref cb) = options.on_checkpoint {
                         cb(&book);
                     }
@@ -548,6 +558,10 @@ impl Scraper for RoyalRoadScraper<'_> {
                                     .to_string(),
                             });
                         book.chapters.sort_by_key(|c| c.index);
+                        done += 1;
+                        if let Some(ref p) = options.progress {
+                            p(done, total);
+                        }
                         if let Some(ref cb) = options.on_checkpoint {
                             cb(&book);
                         }

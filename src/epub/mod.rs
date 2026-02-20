@@ -254,7 +254,7 @@ fn write_opf3(
     let has_cover_page = !matches!(cover, CoverOutcome::NoCover);
     if let CoverOutcome::Image { ext, .. } = cover {
         manifest.push_str(&format!(
-            r#"  <item id="cover-img" href="images/cover.{}" media-type="{}"/>
+            r#"  <item id="cover-img" href="images/cover.{}" media-type="{}" properties="cover-image"/>
 "#,
             ext,
             cover_media_type(ext)
@@ -425,6 +425,13 @@ fn write_opf2(
         ""
     };
 
+    let cover_meta = if matches!(cover, CoverOutcome::Image { .. }) {
+        r#"    <meta name="cover" content="cover-img"/>
+"#
+    } else {
+        ""
+    };
+
     let opf = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" unique-identifier="book-id" version="2.0"
@@ -434,7 +441,7 @@ fn write_opf2(
     <dc:title>{title}</dc:title>
     <dc:creator>{creator}</dc:creator>
     <dc:language>en</dc:language>
-    {description_el}
+    {description_el}{cover_meta}
   </metadata>
   <manifest>
 {manifest}  </manifest>
@@ -454,6 +461,7 @@ fn write_opf2(
         } else {
             format!("    <dc:description>{}</dc:description>", description)
         },
+        cover_meta = cover_meta,
         manifest = manifest,
         spine = spine,
         guide = guide
@@ -612,7 +620,7 @@ fn write_cover_xhtml(
             )
         }
         CoverOutcome::Image { ext, .. } => format!(
-            r#"  <div style="text-align: center;">
+            r#"  <div role="doc-cover" style="text-align: center;">
     <img src="images/cover.{}" alt="Cover" style="max-width: 100%; height: auto;"/>
   </div>"#,
             ext

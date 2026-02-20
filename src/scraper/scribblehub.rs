@@ -24,6 +24,18 @@ pub struct ScribbleHubScraper<'a> {
     client: &'a mut PoliteClient,
 }
 
+/// Extract series ID from URL path /series/{id}/{slug}/. Returns None if not found.
+fn extract_series_id_from_url(url: &str) -> Option<String> {
+    let parsed = Url::parse(url).ok()?;
+    let path = parsed.path();
+    let after_series = path.strip_prefix("/series/")?;
+    let id = after_series.split('/').next()?;
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    Some(id.to_string())
+}
+
 /// Require series URL (path contains /series/; reject /read/.../chapter/). Returns the URL as-is if valid.
 fn ensure_series_url(url: &str) -> Result<String, ScraperError> {
     let parsed = Url::parse(url).map_err(|e| ScraperError::InvalidUrl {
@@ -220,17 +232,61 @@ fn parse_toc_page(html: &str, base: &Url) -> Result<Vec<(u32, String, String)>, 
     Ok(entries)
 }
 
-/// Find next TOC page URL from #pagination-mesh-toc a.page-link.next. Returns None if no next page.
-/// The next link's href typically contains `?toc=N` (e.g. `?toc=2` for page 2).
-fn next_toc_page_url(html: &str, series_base: &Url) -> Option<String> {
-    let doc = Html::parse_document(html);
-    let next_sel = parse_selector("#pagination-mesh-toc a.page-link.next").ok()?;
-    let next_a = doc.select(&next_sel).next()?;
-    let href = next_a.value().attr("href")?;
-    if href.is_empty() || href == "#" {
-        return None;
+/// Parse toc=N from a URL or query string. Returns 1 if missing.
+fn parse_toc_page_from_url(url: &str) -> u32 {
+    let query = url.split('?').nth(1).unwrap_or("");
+    for param in query.split('&') {
+        let param = param.trim();
+        if let Some(rest) = param.strip_prefix("toc=") {
+            let n = rest.split(['#', '&']).next().unwrap_or("").trim();
+            if let Ok(num) = n.parse::<u32>() {
+                return num;
+            }
+        }
     }
-    series_base.join(href).ok().map(|u| u.to_string())
+    1
+}
+
+/// Find next TOC page URL from #pagination-mesh-toc a.page-link.next, or fallback: any a in
+/// #pagination-mesh-toc with href containing toc=(current+1). Scribble Hub sometimes omits the
+/// .next class on the "»" link. Returns None if no next page.
+fn next_toc_page_url(html: &str, series_base: &Url, current_page_url: Option<&str>) -> Option<String> {
+    let doc = Html::parse_document(html);
+    let current_page = current_page_url.map(parse_toc_page_from_url).unwrap_or(1);
+
+    let next_sel = parse_selector("#pagination-mesh-toc a.page-link.next").ok()?;
+    if let Some(next_a) = doc.select(&next_sel).next() {
+        let href = next_a.value().attr("href")?;
+        if !href.is_empty() && href != "#" {
+            if let Ok(u) = series_base.join(href) {
+                return Some(u.to_string());
+            }
+        }
+    }
+
+    let next_page = current_page + 1;
+    for sel in [
+        "#pagination-mesh-toc a.page-link[href*=\"toc=\"]",
+        "#pagination-mesh-toc a[href*=\"toc=\"]",
+    ] {
+        let fallback_sel = match parse_selector(sel) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        for a in doc.select(&fallback_sel) {
+            let href = match a.value().attr("href") {
+                Some(h) if !h.is_empty() && h != "#" => h,
+                _ => continue,
+            };
+            let n = parse_toc_page_from_url(href);
+            if n == next_page {
+                if let Ok(u) = series_base.join(href) {
+                    return Some(u.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Sort TOC entries by order and deduplicate by URL (first occurrence kept). Used when merging multiple TOC pages.
@@ -241,14 +297,60 @@ fn merge_toc_entries(mut all_entries: Vec<(u32, String, String)>) -> Vec<(u32, S
     all_entries
 }
 
-/// Fetch full TOC: first page from series_url, then follow next links until none.
-/// TOC pages are discovered by following `#pagination-mesh-toc a.page-link.next`; we do not parse or use a maximum `?toc=N` value.
+const SCRIBBLEHUB_AJAX_URL: &str = "https://www.scribblehub.com/wp-admin/admin-ajax.php";
+
+/// Fetch full TOC via ScribbleHub's AJAX "Show All Chapters" (wi_getreleases_pagination pagenum=-1).
+/// Returns all chapters in one request. ScribbleHub loads the TOC via JavaScript; the initial HTML
+/// only contains ~15 chapters per page, so pagination often fails. The AJAX endpoint returns all.
+fn fetch_full_toc_via_ajax(
+    client: &mut PoliteClient,
+    series_url: &str,
+) -> Option<Result<Vec<(u32, String, String)>, ScraperError>> {
+    let mypostid = extract_series_id_from_url(series_url)?;
+    let base = match Url::parse(SCRIBBLEHUB_BASE) {
+        Ok(b) => b,
+        Err(e) => return Some(Err(ScraperError::ChapterListParse {
+            reason: e.to_string(),
+        })),
+    };
+
+    let response = match client.post_form(
+        SCRIBBLEHUB_AJAX_URL,
+        &[
+            ("action", "wi_getreleases_pagination"),
+            ("pagenum", "-1"),
+            ("mypostid", &mypostid),
+        ],
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            return Some(Err(ScraperError::Network {
+                url: SCRIBBLEHUB_AJAX_URL.to_string(),
+                source: e,
+            }))
+        }
+    };
+    let html = match check_response(response, SCRIBBLEHUB_AJAX_URL, Some("TOC AJAX")) {
+        Ok(h) => h,
+        Err(e) => return Some(Err(e)),
+    };
+    Some(parse_toc_page(&html, &base).map(merge_toc_entries))
+}
+
+/// Fetch full TOC: try AJAX "Show All" first (reliable), then fall back to paginated requests.
 /// Returns (order, full_url, title) sorted by reading order, deduplicated by URL.
 fn fetch_full_toc(
     client: &mut PoliteClient,
     series_url: &str,
     first_page_html: &str,
 ) -> Result<Vec<(u32, String, String)>, ScraperError> {
+    if let Some(result) = fetch_full_toc_via_ajax(client, series_url) {
+        let entries = result?;
+        if !entries.is_empty() {
+            return Ok(entries);
+        }
+    }
+
     let base = Url::parse(SCRIBBLEHUB_BASE).map_err(|e| ScraperError::ChapterListParse {
         reason: e.to_string(),
     })?;
@@ -257,9 +359,9 @@ fn fetch_full_toc(
     })?;
 
     let mut all_entries = parse_toc_page(first_page_html, &base)?;
-    let mut current_url = next_toc_page_url(first_page_html, &series_base);
+    let mut current_url = next_toc_page_url(first_page_html, &series_base, Some(series_url));
 
-    while let Some(next_url) = current_url {
+    while let Some(next_url) = current_url.clone() {
         let response = client
             .get_with_retry(&next_url)
             .map_err(|e| ScraperError::Network {
@@ -269,7 +371,7 @@ fn fetch_full_toc(
         let html = check_response(response, &next_url, Some("TOC page"))?;
         let page_entries = parse_toc_page(&html, &base)?;
         all_entries.extend(page_entries);
-        current_url = next_toc_page_url(&html, &series_base);
+        current_url = next_toc_page_url(&html, &series_base, Some(&next_url));
     }
 
     let all_entries = merge_toc_entries(all_entries);
@@ -397,9 +499,8 @@ impl Scraper for ScribbleHubScraper<'_> {
             if book.chapters.iter().any(|c| c.index == index) {
                 continue;
             }
-            done += 1;
-            if let Some(ref p) = options.progress {
-                p(done, total);
+            if options.cancel_check.map(|c| c()).unwrap_or(false) {
+                return Err(ScraperError::Cancelled);
             }
             let response = match self.client.get_with_retry(&chapter_url) {
                 Ok(r) => r,
@@ -451,6 +552,10 @@ impl Scraper for ScribbleHubScraper<'_> {
                                     body: "<p>This chapter returned no content.</p>".to_string(),
                                 });
                                 book.chapters.sort_by_key(|c| c.index);
+                                done += 1;
+                                if let Some(ref p) = options.progress {
+                                    p(done, total);
+                                }
                                 if let Some(ref cb) = options.on_checkpoint {
                                     cb(&book);
                                 }
@@ -470,6 +575,10 @@ impl Scraper for ScribbleHubScraper<'_> {
                         body,
                     });
                     book.chapters.sort_by_key(|c| c.index);
+                    done += 1;
+                    if let Some(ref p) = options.progress {
+                        p(done, total);
+                    }
                     if let Some(ref cb) = options.on_checkpoint {
                         cb(&book);
                     }
@@ -486,6 +595,10 @@ impl Scraper for ScribbleHubScraper<'_> {
                                     .to_string(),
                             });
                         book.chapters.sort_by_key(|c| c.index);
+                        done += 1;
+                        if let Some(ref p) = options.progress {
+                            p(done, total);
+                        }
                         if let Some(ref cb) = options.on_checkpoint {
                             cb(&book);
                         }
@@ -626,8 +739,17 @@ mod tests {
     fn next_toc_page_url_returns_some_when_next_link_present() {
         let series_base = Url::parse("https://www.scribblehub.com/series/123/slug/").unwrap();
         let html = r#"<div id="pagination-mesh-toc"><a class="page-link next" href="?toc=2">Next</a></div>"#;
-        let url = next_toc_page_url(html, &series_base);
+        let url = next_toc_page_url(html, &series_base, Some("https://www.scribblehub.com/series/123/slug/"));
         assert!(url.is_some());
+        assert!(url.unwrap().contains("toc=2"));
+    }
+
+    #[test]
+    fn next_toc_page_url_fallback_finds_toc2_without_next_class() {
+        let series_base = Url::parse("https://www.scribblehub.com/series/55539/trouble-with-horns/").unwrap();
+        let html = r#"<ul id="pagination-mesh-toc"><li class="active"><a class="current" href="?toc=1#content1">1</a></li><li><a href="?toc=2#content1" class="page-link">2</a></li><li><a href="?toc=3#content1" class="page-link">»</a></li></ul>"#;
+        let url = next_toc_page_url(html, &series_base, Some("https://www.scribblehub.com/series/55539/trouble-with-horns/"));
+        assert!(url.is_some(), "fallback should find toc=2 when .next class is missing");
         assert!(url.unwrap().contains("toc=2"));
     }
 
@@ -635,13 +757,13 @@ mod tests {
     fn next_toc_page_url_returns_none_when_no_next() {
         let series_base = Url::parse("https://www.scribblehub.com/series/123/slug/").unwrap();
         let html_no_next = r#"<div id="pagination-mesh-toc"></div>"#;
-        assert!(next_toc_page_url(html_no_next, &series_base).is_none());
+        assert!(next_toc_page_url(html_no_next, &series_base, None).is_none());
         let html_disabled =
             r#"<div id="pagination-mesh-toc"><span class="page-link next">Next</span></div>"#;
-        assert!(next_toc_page_url(html_disabled, &series_base).is_none());
+        assert!(next_toc_page_url(html_disabled, &series_base, None).is_none());
         let html_hash =
             r##"<div id="pagination-mesh-toc"><a class="page-link next" href="#">Next</a></div>"##;
-        assert!(next_toc_page_url(html_hash, &series_base).is_none());
+        assert!(next_toc_page_url(html_hash, &series_base, None).is_none());
     }
 
     #[test]

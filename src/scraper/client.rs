@@ -5,13 +5,15 @@ use std::time::{Duration, Instant};
 const DEFAULT_USER_AGENT: &str =
     "Mozilla/5.0 (compatible; rdrscrape/0.1; +https://github.com/rdrscrape)";
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
-const DEFAULT_DELAY_SECS: u64 = 2;
+const DEFAULT_DELAY_SECS: u64 = 4;
 const MAX_REDIRECTS: usize = 10;
 
 /// Default number of attempts for get_with_retry (initial plus retries).
-const DEFAULT_RETRY_COUNT: u32 = 3;
-/// Default backoff delays in seconds after each failed attempt (1s, 2s, 4s).
-const DEFAULT_BACKOFF_SECS: [u64; 3] = [1, 2, 4];
+const DEFAULT_RETRY_COUNT: u32 = 5;
+/// Default backoff delays in seconds after each failed attempt (1s, 2s, 4s, 8s).
+const DEFAULT_BACKOFF_SECS: [u64; 4] = [1, 2, 4, 8];
+/// Backoff for HTTP 429 (rate limit): wait longer so the server can recover.
+const BACKOFF_429_SECS: [u64; 4] = [30, 60, 90, 120];
 
 /// Blocking HTTP client that enforces a delay between requests.
 #[derive(Debug)]
@@ -42,6 +44,18 @@ impl PoliteClient {
         Ok(response)
     }
 
+    /// Perform a POST request with form data. Sleeps until the configured delay has passed.
+    pub fn post_form(
+        &mut self,
+        url: &str,
+        form: &[(&str, &str)],
+    ) -> Result<reqwest::blocking::Response, reqwest::Error> {
+        self.wait_delay();
+        let response = self.inner.post(url).form(form).send()?;
+        self.last_request = Some(Instant::now());
+        Ok(response)
+    }
+
     /// Perform a GET request with retries for transient failures.
     ///
     /// Retries on: timeout, connection errors, HTTP 5xx, and HTTP 429. Attempt count
@@ -62,11 +76,17 @@ impl PoliteClient {
                     let retryable_status = status.is_server_error() || status.as_u16() == 429;
                     if retryable_status && attempt < max_attempts - 1 {
                         last_err = Some(response.error_for_status().unwrap_err());
-                        let backoff = self
-                            .backoff_secs
-                            .get(attempt as usize)
-                            .copied()
-                            .unwrap_or_else(|| *self.backoff_secs.last().unwrap_or(&1));
+                        let backoff = if status.as_u16() == 429 {
+                            BACKOFF_429_SECS
+                                .get(attempt as usize)
+                                .copied()
+                                .unwrap_or(*BACKOFF_429_SECS.last().unwrap_or(&60))
+                        } else {
+                            self.backoff_secs
+                                .get(attempt as usize)
+                                .copied()
+                                .unwrap_or_else(|| *self.backoff_secs.last().unwrap_or(&1))
+                        };
                         std::thread::sleep(Duration::from_secs(backoff));
                         continue;
                     }

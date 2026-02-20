@@ -64,4 +64,8 @@ pub enum ScraperError {
     /// Royal Road: fiction has locked (premium) chapters and --locked-chapters=fail.
     #[error("Fiction has {count} locked (premium) chapter(s). Use --locked-chapters skip or placeholder to include only free chapters or add placeholders.")]
     LockedChaptersNotAllowed { count: usize },
+
+    /// User cancelled (e.g. pressed q during scrape).
+    #[error("Scraping cancelled by user.")]
+    Cancelled,
 }

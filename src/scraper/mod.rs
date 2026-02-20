@@ -54,7 +54,7 @@ pub enum Site {
     ScribbleHub,
 }
 
-/// Options for a scrape run: progress callback, chapter range, resume state, checkpoint, locked/empty handling, toc-only.
+/// Options for a scrape run: progress callback, chapter range, resume state, checkpoint, locked/empty handling, toc-only, cancel check.
 pub struct ScrapeOptions<'a> {
     pub progress: Option<&'a dyn Fn(u32, u32)>,
     pub chapter_range: Option<(u32, u32)>,
@@ -64,6 +64,8 @@ pub struct ScrapeOptions<'a> {
     /// How to handle empty body or missing content container (default Skip).
     pub empty_chapter_behavior: Option<EmptyChapterBehavior>,
     pub toc_only: bool,
+    /// If present, called between chapters; when true, scraper returns Err(ScraperError::Cancelled).
+    pub cancel_check: Option<&'a dyn Fn() -> bool>,
 }
 
 /// Resolve which site to use from URL and optional override. Messages per ERROR_HANDLING.md 2.2.
